@@ -97,18 +97,18 @@ export function AnalyticsDashboard({ urlId }: AnalyticsDashboardProps) {
             config={{
               count: {
                 label: "Clicks",
-                color: "hsl(var(--chart-1))",
+                color: "hsl(220, 70%, 50%)",
               },
             }}
             className="h-[300px]"
           >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={stats.clicks_by_date.reverse()}>
-                <CartesianGrid strokeDasharray="3 3" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="date" />
                 <YAxis />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <Line type="monotone" dataKey="count" stroke="var(--color-count)" strokeWidth={2} />
+                <Line type="monotone" dataKey="count" stroke="hsl(220, 70%, 50%)" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </ChartContainer>
@@ -127,18 +127,18 @@ export function AnalyticsDashboard({ urlId }: AnalyticsDashboardProps) {
               config={{
                 count: {
                   label: "Clicks",
-                  color: "hsl(var(--chart-2))",
+                  color: "hsl(142, 76%, 36%)",
                 },
               }}
               className="h-[250px]"
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stats.clicks_by_device}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="device_type" />
                   <YAxis />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="count" fill="var(--color-count)" />
+                  <Bar dataKey="count" fill="hsl(142, 76%, 36%)" />
                 </BarChart>
               </ResponsiveContainer>
             </ChartContainer>
@@ -155,18 +155,18 @@ export function AnalyticsDashboard({ urlId }: AnalyticsDashboardProps) {
               config={{
                 count: {
                   label: "Clicks",
-                  color: "hsl(var(--chart-3))",
+                  color: "hsl(262, 83%, 58%)",
                 },
               }}
               className="h-[250px]"
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stats.clicks_by_browser}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="browser" />
                   <YAxis />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="count" fill="var(--color-count)" />
+                  <Bar dataKey="count" fill="hsl(262, 83%, 58%)" />
                 </BarChart>
               </ResponsiveContainer>
             </ChartContainer>
