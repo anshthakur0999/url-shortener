@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation"
+import { headers } from "next/headers"
 import { sql } from "@/lib/db"
 import { getCachedUrl, cacheUrl } from "@/lib/redis"
 import { trackClick } from "@/lib/analytics"
@@ -6,6 +7,7 @@ import { invalidateStatsCache } from "@/lib/redis"
 
 export default async function RedirectPage({ params }: { params: Promise<{ shortCode: string }> }) {
   const { shortCode } = await params
+  const headersList = await headers()
 
   try {
     // Try to get from cache first
@@ -72,9 +74,15 @@ export default async function RedirectPage({ params }: { params: Promise<{ short
     }
 
     if (urlId) {
-      // Note: In a server component, we can't access headers directly for tracking
-      // The tracking will happen via client-side beacon or middleware
-      trackClick(urlId, null, null, null).catch((err) => console.error("[v0] Track error:", err))
+      // Extract request metadata from headers
+      const ipAddress = headersList.get("x-forwarded-for")?.split(",")[0] || 
+                        headersList.get("x-real-ip") || 
+                        null
+      const userAgent = headersList.get("user-agent") || null
+      const referrer = headersList.get("referer") || null
+      
+      // Track the click with actual data
+      trackClick(urlId, ipAddress, userAgent, referrer).catch((err) => console.error("[v0] Track error:", err))
       invalidateStatsCache(urlId).catch((err) => console.error("[v0] Cache invalidation error:", err))
     }
 
