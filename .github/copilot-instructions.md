@@ -2,109 +2,104 @@
 
 ## Architecture Overview
 
-This is a Next.js 15 URL shortener application with analytics tracking. Key architectural components:
+Next.js 15 full-stack URL shortener with real-time analytics. Core services:
+- **Frontend**: React 19, TypeScript, Tailwind CSS, shadcn/ui components
+- **Backend**: Next.js API routes on Vercel serverless
+- **Database**: Neon PostgreSQL serverless (`@neondatabase/serverless` driver)
+- **Cache**: Upstash Redis HTTP API (also supports AWS ElastiCache in `lib/redis.ts`)
+- **Analytics**: Vercel Analytics + custom click tracking with device/browser/location parsing
 
-- **Frontend**: Next.js 15 with React 19, TypeScript, Tailwind CSS, shadcn/ui components
-- **Database**: Neon PostgreSQL with serverless driver (`@neondatabase/serverless`)
-- **Cache**: Upstash Redis for URL caching and analytics stats
-- **Analytics**: Vercel Analytics + custom click tracking with geolocation data
-- **Deployment**: Optimized for Vercel with static generation where possible
+## Data Flow Architecture
 
-## Core Data Flow
+**URL Shortening**: `POST /api/shorten` → validate URL → generate/validate short code → insert to `urls` table → return short URL
+- Short codes: 4 chars default (alphanumeric, customizable 3-20 chars with collision detection)
+- Custom codes checked for existing entries before insertion
+- Optional `expiresIn` param (days) stored as `expires_at` timestamp
 
-1. **URL Creation**: `/api/shorten` → Generate short code → Store in `urls` table → Cache in Redis
-2. **URL Resolution**: `/[shortCode]` → Check Redis cache → Fallback to DB → Return original URL
-3. **Click Tracking**: Client-side redirect → `/api/track` → Store click data → Invalidate stats cache
-4. **Analytics**: `/api/analytics/[id]` → Aggregate click data → Cache results for 5 minutes
+**URL Resolution**: `GET /[shortCode]` (server component) → check Redis cache → fallback to DB → check `is_active` and `expires_at` → cache hit → trigger client-side `/api/track` → redirect
+- Returns 404 if short code not found
+- Returns 410 if URL disabled (`is_active=false`) or expired
+- Headers extracted for analytics: `x-forwarded-for`, `x-real-ip`, `user-agent`, `referer`
 
-## Critical Developer Workflows
+**Click Analytics**: `/api/track` POST → extract IP/UA/referrer → call `trackClick()` → insert to `clicks` table → invalidate stats cache
+- `parseUserAgent()` extracts: deviceType (mobile/tablet/desktop), browser (Chrome/Firefox/Safari/Edge/Opera), OS (Windows/macOS/Linux/Android/iOS)
+- `invalidateStatsCache()` deletes Redis key to force fresh aggregation on next analytics request
 
-### Database Setup
-Run the schema in `scripts/001-create-tables.sql` against your Neon database. Required environment variables:
-- `DATABASE_URL`: Neon PostgreSQL connection string
+**Stats Aggregation**: `GET /api/analytics/[id]` → check 5-min Redis cache → miss: query aggregations → cache → return
+- Queries: total_clicks, unique_ips, clicks_by_date, clicks_by_country, clicks_by_device, clicks_by_browser, top_referrers
+- 30-day lookback default (configurable via `days` query param)
 
-### Caching Strategy
-- URLs cached in Redis for 1 hour (`CACHE_TTL = 3600`)
-- Analytics stats cached for 5 minutes
-- Cache invalidation required after URL updates or new clicks
+## Project Patterns
 
-### Analytics Implementation
-Custom click tracking extracts: IP, User-Agent, Referrer, Device/Browser/OS from `parseUserAgent()` in `lib/analytics.ts`
-
-## Project-Specific Patterns
-
-### Path Aliases
-Use `@/` prefix for all imports:
+### Database Access
+Tagged template literals with Neon SQL client:
 ```typescript
-import { sql } from "@/lib/db"
-import { Button } from "@/components/ui/button"
+const result = await sql`SELECT * FROM urls WHERE short_code = ${code}`
+// Result is array of objects with automatic type inference
 ```
 
-### Error Handling
-API routes return consistent error responses:
+### Cache Keys & TTL
+- URLs: prefix `url:<shortCode>`, TTL 3600s (1 hour)
+- Stats: prefix `stats:<urlId>`, TTL 300s (5 minutes)
+- Always invalidate after mutations: `await invalidateStatsCache(urlId)` or `invalidateUrlCache(shortCode)`
+
+### Error Responses (Consistent)
 ```typescript
-return NextResponse.json({ error: "Error message" }, { status: 400 })
-```
-Success responses:
-```typescript
+// Errors
+return NextResponse.json({ error: "message" }, { status: 400|404|409|500 })
+// Success
 return NextResponse.json({ success: true, data: result })
 ```
 
-### Component Structure
-- shadcn/ui components in `components/ui/` with `components.json` configuration
-- Client components marked with `"use client"` directive
-- Server components for data fetching (API routes, page components)
+### UI & Forms
+- All UI via shadcn/ui components in `components/ui/`
+- Client components: `"use client"` directive required for state/effects
+- Server components handle data fetching, then pass to client components
+- Toast notifications: `const { toast } = useToast()` from `hooks/use-toast`
+- Form submission: manual fetch (no Form library used)
 
-### Database Queries
-Use tagged template literals with the Neon client:
+### Logging
+Error logs prefixed with `[v0]` for easy filtering in production:
 ```typescript
-const result = await sql`SELECT * FROM urls WHERE short_code = ${code}`
+console.error("[v0] Error message:", error)
 ```
 
-### Form Handling
-React Hook Form with Zod validation (though minimal in current codebase):
-```typescript
-const { toast } = useToast()
-toast({ title: "Success!", description: "Message" })
+## Setup & Environment
+
+### Database
+Run `scripts/001-create-tables.sql` on Neon PostgreSQL to create `urls` and `clicks` tables with indexes.
+
+### Required Env Vars
+```
+DATABASE_URL=postgresql://[user]:[password]@[host]/[db]
+KV_REST_API_URL=https://[region].upstash.io  # or redis:// for ElastiCache
+KV_REST_API_TOKEN=...                         # empty for ElastiCache
+NEXT_PUBLIC_BASE_URL=https://example.com      # for generating short URLs in API responses
 ```
 
-## Integration Points
-
-### External Services
-- **Neon DB**: Serverless PostgreSQL - use connection pooling for production
-- **Upstash Redis**: Serverless Redis - automatic scaling, REST API
-- **Vercel Analytics**: Automatic page view tracking (configured in `layout.tsx`)
-
-### Environment Variables Required
-```
-DATABASE_URL=postgresql://...
-KV_REST_API_URL=https://...
-KV_REST_API_TOKEN=...
-```
-
-## Key Files to Reference
-
-- `lib/db.ts`: Database client and type definitions
-- `lib/redis.ts`: Caching utilities and patterns
-- `lib/analytics.ts`: Click tracking and user agent parsing
-- `lib/short-code.ts`: URL validation and code generation
-- `scripts/001-create-tables.sql`: Database schema
-- `components/ui/`: shadcn/ui component library setup
-- `app/api/`: Next.js API routes following REST conventions
-
-## Development Commands
-
+### Dev Commands
 ```bash
-pnpm dev      # Start development server
-pnpm build    # Production build
-pnpm lint     # ESLint checking
+pnpm dev       # localhost:3000, hot reload
+pnpm build     # compile to .next/
+pnpm start     # production server
+pnpm lint      # ESLint (Next.js config)
 ```
 
-## Common Patterns
+## Path Aliases & Imports
+All imports use `@/` prefix (mapped to project root in `tsconfig.json`):
+```typescript
+import { sql } from "@/lib/db"
+import { Button } from "@/components/ui/button"
+import { trackClick } from "@/lib/analytics"
+```
 
-- **URL Validation**: Use `isValidUrl()` from `lib/short-code.ts`
-- **Short Code Generation**: `generateShortCode()` with collision detection
-- **Cache Invalidation**: Always invalidate after data mutations
-- **Error Logging**: Console errors prefixed with `[v0]` for filtering
-- **UI Components**: Prefer shadcn/ui over custom implementations</content>
+## Key Files Reference
+- `lib/db.ts` - Neon client init, interface definitions (Url, Click, ClickStats)
+- `lib/redis.ts` - Redis abstraction, cacheUrl/getCachedUrl, cacheStats/getCachedStats, invalidation
+- `lib/analytics.ts` - parseUserAgent(), trackClick(), getUrlAnalytics() aggregation
+- `lib/short-code.ts` - generateShortCode(), isValidUrl()
+- `app/api/shorten/route.ts` - URL creation, custom code validation, collision detection
+- `app/[shortCode]/page.tsx` - Server-side redirect logic, cache check, click tracking
+- `app/api/track/route.ts` - Click insertion, cache invalidation
+- `app/api/analytics/[id]/route.ts` - Stats aggregation with caching</content>
 <parameter name="filePath">c:\Users\Ansh\Desktop\url-shortener\.github\copilot-instructions.md

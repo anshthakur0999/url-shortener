@@ -1,0 +1,155 @@
+name: Build & Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPO_NAME: url-shortener
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_USER: ubuntu
+  EC2_KEY: ${{ secrets.EC2_SSH_KEY }}
+
+jobs:
+  build-and-push:
+    name: Build Docker Image & Push to ECR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        id: docker-build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build \
+            --tag $ECR_REGISTRY/$ECR_REPO_NAME:latest \
+            --tag $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }} \
+            .
+          echo "image=$ECR_REGISTRY/$ECR_REPO_NAME:latest" >> $GITHUB_OUTPUT
+
+      - name: Push to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPO_NAME:latest
+          docker push $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}
+          echo "Image pushed: $ECR_REGISTRY/$ECR_REPO_NAME:latest"
+
+      - name: Output image
+        id: image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "image=$ECR_REGISTRY/$ECR_REPO_NAME:latest" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Save SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ env.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'DEPLOY_SCRIPT'
+          set -e
+          
+          echo "🚀 Starting deployment..."
+          
+          # Export environment variables for deployment script
+          export ECR_REPO_URI="${{ env.IMAGE }}"
+          export AWS_REGION="${{ env.AWS_REGION }}"
+          export AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          export DATABASE_URL="${{ secrets.DATABASE_URL }}"
+          export KV_REST_API_URL="${{ secrets.KV_REST_API_URL }}"
+          export KV_REST_API_TOKEN="${{ secrets.KV_REST_API_TOKEN }}"
+          export NEXT_PUBLIC_BASE_URL="${{ secrets.NEXT_PUBLIC_BASE_URL }}"
+          
+          # Clone or pull the latest code
+          if [ ! -d "url-shortener" ]; then
+            git clone https://github.com/anshthakur0999/url-shortener.git
+          else
+            cd url-shortener
+            git pull origin main
+            cd ..
+          fi
+          
+          cd url-shortener
+          
+          # Make scripts executable
+          chmod +x scripts/deploy.sh
+          chmod +x scripts/validate_deployment.sh
+          chmod +x scripts/switch_traffic.sh
+          
+          # Run deployment
+          bash scripts/deploy.sh
+          
+          # Validate deployment
+          sleep 3
+          bash scripts/validate_deployment.sh
+          
+          # Switch traffic
+          bash scripts/switch_traffic.sh
+          
+          echo "✅ Deployment complete!"
+          DEPLOY_SCRIPT
+
+      - name: Verify live deployment
+        run: |
+          sleep 5
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ env.EC2_HOST }}/api/health")
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✅ Live deployment verified - API responding with 200"
+          else
+            echo "⚠️  API responded with HTTP $RESPONSE"
+          fi
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ✅ Successful" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ needs.build-and-push.outputs.image }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**EC2 Host:** http://${{ env.EC2_HOST }}" >> $GITHUB_STEP_SUMMARY
