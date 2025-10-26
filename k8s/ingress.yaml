@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: url-shortener-ingress
+  namespace: url-shortener
+  annotations:
+    # For K3s with Traefik (default)
+    kubernetes.io/ingress.class: "traefik"
+    # Uncomment if using cert-manager for SSL
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  rules:
+  - host: your-domain.com  # Replace with your actual domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: url-shortener-service
+            port:
+              number: 80
+  # Uncomment for SSL/TLS
+  # tls:
+  # - hosts:
+  #   - your-domain.com
+  #   secretName: url-shortener-tls
+

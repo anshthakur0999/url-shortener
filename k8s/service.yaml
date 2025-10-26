@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-shortener-service
+  namespace: url-shortener
+  labels:
+    app: url-shortener
+spec:
+  type: LoadBalancer
+  selector:
+    app: url-shortener
+    version: blue  # This will be switched between 'blue' and 'green' during deployment
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# Service for Blue deployment (for testing before switching)
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-shortener-blue
+  namespace: url-shortener
+  labels:
+    app: url-shortener
+    version: blue
+spec:
+  type: ClusterIP
+  selector:
+    app: url-shortener
+    version: blue
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+
+---
+# Service for Green deployment (for testing before switching)
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-shortener-green
+  namespace: url-shortener
+  labels:
+    app: url-shortener
+    version: green
+spec:
+  type: ClusterIP
+  selector:
+    app: url-shortener
+    version: green
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+
